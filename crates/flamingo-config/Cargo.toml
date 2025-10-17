@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-flamingo-logger = { path = "../flamingo-logger" }
 flamingo-err = { path = "../flamingo-err" }
 dirs = "6.0.0"
 serde = { version = "1.0.*", features = [ "derive" ] }

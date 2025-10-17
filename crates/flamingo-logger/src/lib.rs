@@ -1,3 +1,4 @@
+use flamingo_config::process::ProcessConfig;
 use log::{Level, LevelFilter, Metadata, Record};
 use nu_ansi_term::Color;
 use std::os::unix::process;
@@ -118,21 +119,17 @@ impl Default for FlamingoLogger {
 
 impl FlamingoLogger {
     /// Create a FlamingoLogger from logging configuration
-    pub fn from_config(
-        log_dir: &Option<PathBuf>,
-        session_key: &Option<String>,
-        min_log_level: &str,
-    ) -> Self {
-        let log_dir = log_dir.clone().unwrap_or_else(default_log_dir);
+    pub fn from_config(config: &ProcessConfig) -> Self {
+        let log_dir = config.log_dir.clone().unwrap_or_else(default_log_dir);
 
         if let Err(err) = fs::create_dir_all(&log_dir) {
             eprintln!("Unable to create log dir {log_dir:?}: {err:?}!")
         };
 
-        let session_id = session_key.clone().unwrap_or_else(get_session_id);
+        let session_id = config.session_key.clone().unwrap_or_else(get_session_id);
         let session_log_file = log_dir.join(format!("session_{session_id}.log"));
 
-        let log_level = match min_log_level.to_ascii_lowercase().as_str() {
+        let log_level = match config.min_log_level.to_ascii_lowercase().as_str() {
             "trace" => Level::Trace,
             "debug" => Level::Debug,
             "info" => Level::Info,
@@ -276,8 +273,8 @@ impl log::Log for FlamingoLogger {
 /// Initializes the global logger with a FlamingoLogger instance and syncs
 /// the maximum log level. This should be called once at the start of the
 /// process.
-pub fn init(log_dir: &Option<PathBuf>, session_key: &Option<String>, min_log_level: &str) {
-    let logger = FlamingoLogger::from_config(log_dir, session_key, min_log_level);
+pub fn init(config: &ProcessConfig) {
+    let logger = FlamingoLogger::from_config(config);
 
     log::set_max_level(match logger.level {
         Level::Error => LevelFilter::Error,

@@ -1,6 +1,6 @@
 pub mod git;
 pub mod path;
-mod process;
+pub mod process;
 
 use crate::git::GitConfig;
 use crate::path::PathConfig;
@@ -50,13 +50,5 @@ impl FlamingoConfig {
         let content = fs::read_to_string(cfg_path).map_err(ConfigError::IoError)?;
         let config: FlamingoConfig = toml::from_str(&content).map_err(ConfigError::ParseError)?;
         Ok(config)
-    }
-
-    pub fn setup_logger(&self) {
-        flamingo_logger::init(
-            &self.process.log_dir,
-            &self.process.session_key,
-            &self.process.min_log_level,
-        );
     }
 }
