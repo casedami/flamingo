@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PathConfig {
+    /// Defines how the path should be formatted
     pub truncate: TruncateStrategy,
+    /// If true, replaces $HOME with "~"
     pub shorten_home: bool,
 }
 
@@ -20,9 +22,14 @@ pub enum TruncateStrategy {
     /// Show entire path
     None,
 
-    /// Shorten middle directories
-    /// * TailSize=1, DirChars=1:
-    ///   ~/path/to/my/files -> ~/p/t/m/files
+    /// Shorten intermediary directories
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let strategy = TruncateStrategy.Smart(tail_size: 1, dir_chars: 1);
+    /// // ~/path/to/my/files -> ~/p/t/m/files
+    /// ```
     Smart {
         /// Number of full directories to show at the end of the path
         #[serde(default = "default_min")]
@@ -33,16 +40,26 @@ pub enum TruncateStrategy {
     },
 
     /// Only show the last N directories
-    /// * Size=2:
-    ///   ~/path/to/my/files -> my/files
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let strategy = TruncateStrategy.Tail(size: 2);
+    /// // ~/path/to/my/files -> my/files
+    /// ```
     Tail { size: usize },
 
     /// Truncate to character limit
-    /// * Side=LEFT, Max=10:
-    ///   ~/path/to/my/files -> …/my/files
     ///
-    /// * Side=RIGHT, Max=15:
-    ///   ~/path/to/my/files -> ~/path/…/files
+    /// # Examples
+    ///
+    /// ```
+    /// let strategy = TruncateStrategy.Length(side: Side.Left, max: 10, symbol: "…");
+    /// // ~/path/to/my/files -> …/my/files
+    ///
+    /// let strategy = TruncateStrategy.Length(side: Side.Right, max: 15, symbol: "…");
+    /// // ~/path/to/my/files -> ~/path/…/files
+    /// ```
     Length {
         max: usize,
         /// Which side to start the substitution loop:
@@ -55,8 +72,21 @@ pub enum TruncateStrategy {
     },
 
     /// Use different strategies depending on the path length
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let strategy = TruncateStrategy.Adaptive(
+    ///     threshold: 10
+    ///     short: TruncateStrategy.Tail(size: 2),
+    ///     long: TruncateStrategy.Smart(tail_size: 1, dir_chars: 1)
+    /// );
+    ///
+    /// // ~/path/to -> path/to
+    /// // ~/path/to/my/files -> ~/p/t/m/files
+    /// ```
     Adaptive {
-        /// Maximum number of chars for short strategy
+        /// Maximum number of chars before using long strategy
         threshold: usize,
         short: Box<TruncateStrategy>,
         long: Box<TruncateStrategy>,

@@ -1,53 +1,52 @@
 use flamingo_config::path::{PathConfig, Side, TruncateStrategy};
-use std::env::{self, VarError};
+use std::env;
 use std::path::{Path, PathBuf};
 
+/// Returns the current path formatted according to a specified configuration
 pub fn path(config: &PathConfig) -> String {
-    let current_dir = get_current_directory();
-    format_path(&current_dir, config)
-}
-
-fn get_current_directory() -> PathBuf {
-    // prefer PWD because it preserves symlinks
-    // ...fallback to current_dir()
-    env::var("PWD")
-        .map(PathBuf::from)
-        .and_then(|p| {
-            if p.exists() {
-                Ok(p)
-            } else {
-                Err(VarError::NotPresent)
-            }
-        })
-        .or_else(|_| env::current_dir())
-        .unwrap_or_else(|_| PathBuf::from("/"))
-}
-
-fn format_path(path: &Path, config: &PathConfig) -> String {
-    let mut path = path.to_path_buf();
+    let mut cwd = cwd();
 
     if config.shorten_home {
-        path = shorten_home_dir(path);
+        cwd = substitute_home_dir(cwd);
     }
 
-    apply_truncation_strategy(&path, config)
+    apply_truncation_strategy(&cwd, &config.truncate)
 }
 
-fn shorten_home_dir(path: PathBuf) -> PathBuf {
+/// Returns the current working directory
+///
+/// Uses the $PWD environment variable because it preserves symlinks, with a fallback to
+/// `std::env::current_dir`. In the that both methods fail, the root directory is returned.
+fn cwd() -> PathBuf {
+    env::var("PWD")
+        .map(PathBuf::from)
+        .ok()
+        .filter(|p| p.exists())
+        .or_else(|| env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// Substitutes $HOME with "~"
+///
+/// Takes ownership of the path argument. In the case that the home directory is unable to be
+/// located, ownership of the original path argument is returned. Otherwise, a new PathBuf is
+/// returned with $HOME properly substituted.
+fn substitute_home_dir(path: PathBuf) -> PathBuf {
     if let Some(home_dir) = dirs::home_dir() {
         if let Ok(relative_path) = path.strip_prefix(&home_dir) {
-            let mut shortened = PathBuf::from("~");
-            shortened.push(relative_path);
-            return shortened;
+            return PathBuf::from("~").join(relative_path);
         }
     }
     path
 }
 
-fn apply_truncation_strategy(path: &Path, config: &PathConfig) -> String {
+/// Applies a truncation strategy to a Path and returns a String
+///
+/// See flamingo-config::path for exmaples.
+fn apply_truncation_strategy(path: &Path, strategy: &TruncateStrategy) -> String {
     let path_str = path.to_string_lossy();
 
-    match &config.truncate {
+    match strategy {
         TruncateStrategy::None => path_str.to_string(),
 
         TruncateStrategy::Smart {
@@ -288,16 +287,16 @@ mod tests {
         // This test assumes we can get the home directory
         if let Some(home_dir) = dirs::home_dir() {
             let home_subpath = home_dir.join("Documents").join("projects");
-            let result = shorten_home_dir(home_subpath);
+            let result = substitute_home_dir(home_subpath);
             assert_eq!(result, PathBuf::from("~/Documents/projects"));
 
             // Test path not under home directory
             let other_path = PathBuf::from("/usr/local/bin");
-            let result = shorten_home_dir(other_path.clone());
+            let result = substitute_home_dir(other_path.clone());
             assert_eq!(result, other_path);
 
             // Test exact home directory
-            let result = shorten_home_dir(home_dir);
+            let result = substitute_home_dir(home_dir);
             assert_eq!(result, PathBuf::from("~"));
         }
     }
@@ -318,45 +317,20 @@ mod tests {
 
         // Test short path uses short strategy (None)
         let short_path = PathBuf::from("/short/path");
-        let result = apply_truncation_strategy(&short_path, &config);
+        let result = apply_truncation_strategy(&short_path, &config.truncate);
         assert_eq!(result, "/short/path");
 
         // Test long path uses long strategy (Tail)
         let long_path = PathBuf::from("/very/long/path/to/some/directory");
-        let result = apply_truncation_strategy(&long_path, &config);
+        let result = apply_truncation_strategy(&long_path, &config.truncate);
         assert_eq!(result, "some/directory");
-    }
-
-    #[test]
-    fn test_format_path_integration() {
-        let config = create_test_config(
-            TruncateStrategy::Smart {
-                tail_size: 2,
-                dir_chars: 1,
-            },
-            true,
-        );
-
-        if let Some(home_dir) = dirs::home_dir() {
-            let test_path = home_dir
-                .join("very")
-                .join("long")
-                .join("path")
-                .join("to")
-                .join("projects")
-                .join("myapp");
-
-            let result = format_path(&test_path, &config);
-            // Should shorten home and apply smart truncation
-            assert_eq!(result, "~/v/l/p/t/projects/myapp");
-        }
     }
 
     #[test]
     fn test_no_truncation() {
         let config = create_test_config(TruncateStrategy::None, false);
         let path = PathBuf::from("/very/long/path/to/directory");
-        let result = apply_truncation_strategy(&path, &config);
+        let result = apply_truncation_strategy(&path, &config.truncate);
         assert_eq!(result, "/very/long/path/to/directory");
     }
 
@@ -372,17 +346,17 @@ mod tests {
 
         // Test root path
         let root_path = PathBuf::from("/");
-        let result = apply_truncation_strategy(&root_path, &config);
+        let result = apply_truncation_strategy(&root_path, &config.truncate);
         assert_eq!(result, "/");
 
         // Test empty path
         let empty_path = PathBuf::from("");
-        let result = apply_truncation_strategy(&empty_path, &config);
+        let result = apply_truncation_strategy(&empty_path, &config.truncate);
         assert_eq!(result, "");
 
         // Test single directory
         let single_path = PathBuf::from("directory");
-        let result = apply_truncation_strategy(&single_path, &config);
+        let result = apply_truncation_strategy(&single_path, &config.truncate);
         assert_eq!(result, "directory");
     }
 
