@@ -3,6 +3,7 @@ pub enum GitError {
     NotARepository,
     CommandFailed(String),
     ParseError(String),
+    ExecutionError(std::io::Error),
 }
 
 impl std::fmt::Display for GitError {
@@ -11,7 +12,14 @@ impl std::fmt::Display for GitError {
             GitError::NotARepository => write!(f, "Not a git repository"),
             GitError::CommandFailed(msg) => write!(f, "Git command failed: {msg}"),
             GitError::ParseError(msg) => write!(f, "Failed to parse git output: {msg}"),
+            GitError::ExecutionError(err) => write!(f, "Failed to execute command: {err}"),
         }
+    }
+}
+
+impl From<std::io::Error> for GitError {
+    fn from(err: std::io::Error) -> Self {
+        GitError::ExecutionError(err)
     }
 }
 

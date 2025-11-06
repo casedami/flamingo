@@ -97,7 +97,7 @@ impl Default for GitSymbols {
 
 // Default functions
 fn default_git_format() -> String {
-    "{state} {branch} ({stash}:{dirty}:{ahead}:{behind})".to_string()
+    "$state $branch ($stash:$dirty:$ahead:$behind)".to_string()
 }
 fn default_remote_symbol() -> String {
     // TODO:
