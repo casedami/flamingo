@@ -71,212 +71,154 @@ impl GitState {
 }
 
 pub fn git<P: AsRef<Path>>(path: P, config: &GitConfig) -> Result<String, GitError> {
-    if !is_git_repository(&path)? {
-        return Err(GitError::NotARepository);
-    }
+    try_exec_git_in_dir(&path)
+        .map_err(GitError::ExecutionError)?
+        .then_some(())
+        .ok_or(GitError::NotARepository)?;
 
-    let branch = get_current_branch(&path)?;
+    let branch = get_current_branch(&path).ok_or(GitError::NotARepository)?;
+    let (ahead, behind) = get_ahead_behind(&path);
 
-    // Get ahead/behind counts
-    if let Some(b) = branch {
-        // WARN: might cause issues if in detached HEAD state
-        let (ahead, behind) = get_ahead_behind(&path)?;
-        let git_info = GitInfo {
-            branch: b,
-            is_dirty: is_working_directory_dirty(&path)?,
-            stash_count: get_stash_count(&path)?,
-            remote: get_remote_name(&path)?,
-            state: get_repository_state(&path)?,
+    Ok(format_git_info(
+        &GitInfo {
+            branch,
+            is_dirty: is_dirty(&path),
+            stash_count: get_stash_count(&path),
+            remote: get_remote_name(&path),
+            state: get_repo_state(&path),
             ahead,
             behind,
-        };
-        Ok(format_git_info(&git_info, config))
-    } else {
-        Err(GitError::NotARepository)
-    }
+        },
+        config,
+    ))
 }
 
-/// Format git information according to the configured format string
-fn format_git_info(git_info: &GitInfo, config: &GitConfig) -> String {
-    let mut result = config.format.clone();
-
-    // Replace branch
-    result = result.replace("$branch", git_info.branch.as_str());
-
-    // Replace dirty indicator
-    let dirty_indicator = if git_info.is_dirty {
-        config.symbols.dirty.as_str()
-    } else {
-        ""
-    };
-    result = result.replace("$dirty", dirty_indicator);
-
-    // Replace ahead/behind indicators
-    let ahead_indicator = if git_info.ahead > 0 {
-        format!("{}{}", config.symbols.ahead, git_info.ahead)
-    } else {
-        String::new()
-    };
-    result = result.replace("$ahead", &ahead_indicator);
-
-    let behind_indicator = if git_info.behind > 0 {
-        format!("{}{}", config.symbols.behind, git_info.behind)
-    } else {
-        String::new()
-    };
-    result = result.replace("$behind", &behind_indicator);
-
-    // Replace state
-    result = result.replace("$state", git_info.state.as_str());
-
-    // Replace remote
-    if let Some(ref remote) = git_info.remote {
-        result = result.replace("$remote", remote);
-    } else {
-        result = result.replace("$remote", "");
-    }
-
-    // Replace stash count
-    let stash_indicator = if git_info.stash_count > 0 {
-        format!("${}", git_info.stash_count)
-    } else {
-        String::new()
-    };
-    result = result.replace("$stash", &stash_indicator);
-
-    result
-}
-
-/// Check if the given path is inside a git repository
-fn is_git_repository<P: AsRef<Path>>(path: P) -> Result<bool, GitError> {
-    let output = Command::new("git")
+fn try_exec_git_in_dir<P: AsRef<Path>>(path: P) -> Result<bool, std::io::Error> {
+    Ok(std::process::Command::new("git")
         .arg("rev-parse")
         .arg("--is-inside-work-tree")
-        .current_dir(path)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    Ok(output.status.success())
-}
-
-/// Get the current branch name
-fn get_current_branch<P: AsRef<Path>>(path: P) -> Result<Option<String>, GitError> {
-    let output = Command::new("git")
-        .arg("branch")
-        .arg("--show-current")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .current_dir(&path)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+        .output()?
+        .status
+        .success())
+}
 
-    if !output.status.success() {
-        return Ok(None);
-    }
+fn format_git_info(git_info: &GitInfo, config: &GitConfig) -> String {
+    config
+        .format
+        .replace("$branch", &git_info.branch)
+        .replace("$state", git_info.state.as_str())
+        .replace("$remote", git_info.remote.as_deref().unwrap_or(""))
+        .replace(
+            "$dirty",
+            if git_info.is_dirty {
+                &config.symbols.dirty
+            } else {
+                ""
+            },
+        )
+        .replace(
+            "$ahead",
+            &match git_info.ahead {
+                0 => String::new(),
+                n => format!("{}{}", config.symbols.ahead, n),
+            },
+        )
+        .replace(
+            "$behind",
+            &match git_info.behind {
+                0 => String::new(),
+                n => format!("{}{}", config.symbols.behind, n),
+            },
+        )
+        .replace(
+            "$stash",
+            &match git_info.stash_count {
+                0 => String::new(),
+                n => format!("${n}"),
+            },
+        )
+        .trim()
+        .to_string()
+}
 
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if branch.is_empty() {
-        // Might be in detached HEAD state, try to get commit hash
-        let output = Command::new("git")
-            .arg("rev-parse")
-            .arg("--short")
-            .arg("HEAD")
-            .current_dir(&path)
-            .output()
-            .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-        if output.status.success() {
-            let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            Ok(Some(format!("HEAD@{commit}")))
-        } else {
-            Ok(None)
+fn get_current_branch<P: AsRef<Path>>(path: P) -> Option<String> {
+    let proc = gitcmd!(args: "branch", "--show-current"; dir: &path);
+    if proc.status.success() {
+        let branch = read_stdout!(&proc.stdout);
+        if !branch.is_empty() {
+            return Some(branch);
         }
+    }
+
+    // Detached HEAD state - get short commit hash
+    let proc = gitcmd!(args: "rev-parse", "--short", "HEAD"; dir: &path);
+    proc.status
+        .success()
+        .then(|| format!("HEAD@{}", read_stdout!(&proc.stdout)))
+}
+
+fn get_ahead_behind<P: AsRef<Path>>(path: P) -> (usize, usize) {
+    let proc =
+        gitcmd!(args: "rev-list", "--left-right", "--count", "HEAD...@{upstream}"; dir: path);
+    if !proc.status.success() {
+        // No upstream configured or invalid ref
+        return (0, 0);
+    }
+    let counts = read_stdout!(&proc.stdout);
+    let ahead_behind: Vec<&str> = counts.split_whitespace().collect();
+
+    match ahead_behind.as_slice() {
+        [ahead, behind] => {
+            let ahead = ahead.parse::<usize>().unwrap_or(0);
+            let behind = behind.parse::<usize>().unwrap_or(0);
+            (ahead, behind)
+        }
+        _ => (0, 0),
+    }
+}
+
+fn is_dirty<P: AsRef<Path>>(path: P) -> bool {
+    let proc = gitcmd!(args: "status", "--porcelain"; dir: path);
+    proc.status.success() && !proc.stdout.is_empty()
+}
+
+fn get_stash_count<P: AsRef<Path>>(path: P) -> usize {
+    let proc = gitcmd!(args: "stash", "list"; dir: path);
+    if proc.status.success() {
+        read_stdout!(&proc.stdout).lines().count()
     } else {
-        Ok(Some(branch))
+        0
     }
 }
 
-/// Get ahead/behind counts relative to upstream
-fn get_ahead_behind<P: AsRef<Path>>(path: P) -> Result<(usize, usize), GitError> {
-    let output = Command::new("git")
-        .arg("rev-list")
-        .arg("--left-right")
-        .arg("--count")
-        .arg("HEAD...@{upstream}")
-        .current_dir(path)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-    if !output.status.success() {
-        // No upstream configured
-        return Ok((0, 0));
-    }
-
-    let counts = String::from_utf8_lossy(&output.stdout);
-    let counts = counts.trim(); // Separate line for clarity
-    let parts: Vec<&str> = counts.split_whitespace().collect();
-
-    if parts.len() != 2 {
-        return Ok((0, 0));
-    }
-    let ahead = parts[0].parse::<usize>().unwrap_or(0);
-    let behind = parts[1].parse::<usize>().unwrap_or(0);
-    Ok((ahead, behind))
+fn get_remote_name<P: AsRef<Path>>(path: P) -> Option<String> {
+    let proc = gitcmd!(args: "remote"; dir: path);
+    proc.status
+        .success()
+        .then(|| {
+            read_stdout!(&proc.stdout)
+                .lines()
+                .next()
+                .map(|s| s.to_string())
+        })
+        .flatten()
 }
 
-/// Check if the working directory has uncommitted changes
-fn is_working_directory_dirty<P: AsRef<Path>>(path: P) -> Result<bool, GitError> {
-    let output = Command::new("git")
-        .arg("status")
-        .arg("--porcelain")
-        .current_dir(path)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !output.status.success() {
-        return Ok(false);
-    }
-
-    Ok(!output.stdout.is_empty())
-}
-
-/// Get the number of stashed changes
-fn get_stash_count<P: AsRef<Path>>(path: P) -> Result<usize, GitError> {
-    let output = Command::new("git")
-        .arg("stash")
-        .arg("list")
-        .current_dir(path)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !output.status.success() {
-        return Ok(0);
-    }
-
-    let stash_list = String::from_utf8_lossy(&output.stdout);
-    Ok(stash_list.lines().count())
-}
-
-/// Get the name of the remote (usually "origin")
-fn get_remote_name<P: AsRef<Path>>(path: P) -> Result<Option<String>, GitError> {
-    let output = Command::new("git")
-        .arg("remote")
-        .current_dir(path)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let remotes = String::from_utf8_lossy(&output.stdout);
-    let first_remote = remotes.lines().next();
-    Ok(first_remote.map(|s| s.to_string()))
-}
-
-/// Get the current repository state (merging, rebasing, etc.)
-fn get_repository_state<P: AsRef<Path>>(path: P) -> Result<GitState, GitError> {
+fn get_repo_state<P: AsRef<Path>>(path: P) -> GitState {
     let git_dir = path.as_ref().join(".git");
+    let exists = |file: &str| git_dir.join(file).exists();
 
-    if git_dir.join("MERGE_HEAD").exists() {
-        return Ok(GitState::Merging);
+    match () {
+        _ if exists("MERGE_HEAD") => GitState::Merging,
+        _ if exists("REBASE_HEAD") || exists("rebase-apply") || exists("rebase-merge") => {
+            GitState::Rebasing
+        }
+        _ if exists("CHERRY_PICK_HEAD") => GitState::CherryPicking,
+        _ if exists("REVERT_HEAD") => GitState::Reverting,
+        _ if exists("BISECT_LOG") => GitState::Bisecting,
+        _ => GitState::Clean,
     }
 
     if git_dir.join("REBASE_HEAD").exists()
