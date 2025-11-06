@@ -37,13 +37,13 @@ macro_rules! read_stdout {
 
 #[derive(Debug, Default)]
 struct GitInfo {
-    pub branch: String,
-    pub ahead: usize,
-    pub behind: usize,
-    pub is_dirty: bool,
-    pub stash_count: usize,
-    pub remote: Option<String>,
-    pub state: GitState,
+    branch: String,
+    ahead: usize,
+    behind: usize,
+    is_dirty: bool,
+    stash_count: usize,
+    remote: Option<String>,
+    state: GitState,
 }
 
 #[derive(Debug, Default)]
