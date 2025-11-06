@@ -12,7 +12,7 @@ fn main() {
         }
         FlamingoConfig::default()
     });
-    cfg.setup_logger();
+    logger::init(&cfg.process);
     init_global_threadpool(cfg.process.num_threads);
 
     rayon::scope(|s| {

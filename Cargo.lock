@@ -105,7 +105,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "flamingo-err",
- "flamingo-logger",
+ "log",
  "serde",
  "toml",
 ]
@@ -123,6 +123,7 @@ version = "0.1.0"
 dependencies = [
  "flamingo-config",
  "flamingo-err",
+ "tempfile",
 ]
 
 [[package]]
@@ -130,6 +131,7 @@ name = "flamingo-logger"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "flamingo-config",
  "log",
  "nu-ansi-term",
  "tempfile",
