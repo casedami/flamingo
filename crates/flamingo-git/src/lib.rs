@@ -1,7 +1,39 @@
 use flamingo_config::git::GitConfig;
 use flamingo_err::GitError;
 use std::path::Path;
-use std::process::Command;
+
+mod test_utils;
+
+/// Runs a git command as a subprocess in a directory and returns an `Output` object.
+///
+/// Assumes that git can be found in $PATH and the directory is valid, therefore the
+/// `Option<Output>` object that is returned from `std::process::Command` is automatically
+/// unwrapped. Be sure to use this macro *only* in circumstances where the **execution** of the git
+/// command will not fail. Note, the execution of the command failing is separate from whether or
+/// not the command fails.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Run `git commit -am "My commit message" in the current directory
+/// gitcmd!(args: "commit", "-a", "-m", "My commit message"; dir: &std::env::current_dir().unwrap());
+/// ```
+macro_rules! gitcmd {
+    (args: $($arg:expr),*; dir: $dir:expr) => {
+        std::process::Command::new("git")
+            $(.arg($arg))*
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .current_dir($dir)
+            .output()
+            .unwrap()
+    };
+}
+
+/// Reads a slice of vector bytes into a String.
+#[macro_export]
+macro_rules! read_stdout {
+    ($cmd:expr) => {{ String::from_utf8_lossy(&$cmd).trim().to_string() }};
+}
 
 #[derive(Debug, Default)]
 struct GitInfo {
