@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn get_config_path() -> Result<OsString, ConfigError> {
     let flamingo_cfg = "flamingo.toml";
@@ -48,6 +48,12 @@ impl FlamingoConfig {
     pub fn load() -> Result<FlamingoConfig, ConfigError> {
         let cfg_path = get_config_path()?;
         let content = fs::read_to_string(cfg_path).map_err(ConfigError::IoError)?;
+        let config: FlamingoConfig = toml::from_str(&content).map_err(ConfigError::ParseError)?;
+        Ok(config)
+    }
+
+    pub fn load_from<P: AsRef<Path>>(path: P) -> Result<FlamingoConfig, ConfigError> {
+        let content = fs::read_to_string(path).map_err(ConfigError::IoError)?;
         let config: FlamingoConfig = toml::from_str(&content).map_err(ConfigError::ParseError)?;
         Ok(config)
     }

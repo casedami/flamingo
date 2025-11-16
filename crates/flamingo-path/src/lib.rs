@@ -3,21 +3,21 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 /// Returns the current path formatted according to a specified configuration
-pub fn path(config: &PathConfig) -> String {
-    let mut cwd = cwd();
-
-    if config.shorten_home {
-        cwd = substitute_home_dir(cwd);
-    }
-
-    apply_truncation_strategy(&cwd, &config.truncate)
+pub fn flamingo_path(config: &PathConfig, from: Option<PathBuf>) -> String {
+    let path = from.unwrap_or_else(cwd);
+    let path = if config.shorten_home {
+        substitute_home_dir(&path, None)
+    } else {
+        path
+    };
+    apply_truncation_strategy(&path, &config.truncate)
 }
 
 /// Returns the current working directory
 ///
 /// Uses the $PWD environment variable because it preserves symlinks, with a fallback to
 /// `std::env::current_dir`. In the that both methods fail, the root directory is returned.
-fn cwd() -> PathBuf {
+pub fn cwd() -> PathBuf {
     env::var("PWD")
         .map(PathBuf::from)
         .ok()
@@ -31,13 +31,20 @@ fn cwd() -> PathBuf {
 /// Takes ownership of the path argument. In the case that the home directory is unable to be
 /// located, ownership of the original path argument is returned. Otherwise, a new PathBuf is
 /// returned with $HOME properly substituted.
-fn substitute_home_dir(path: PathBuf) -> PathBuf {
-    if let Some(home_dir) = dirs::home_dir() {
-        if let Ok(relative_path) = path.strip_prefix(&home_dir) {
-            return PathBuf::from("~").join(relative_path);
-        }
-    }
-    path
+fn substitute_home_dir(path: &Path, home_dir: Option<&Path>) -> PathBuf {
+    home_dir
+        .map(Path::to_path_buf)
+        .or_else(dirs::home_dir)
+        .and_then(|home| {
+            path.strip_prefix(&home).ok().map(|relative| {
+                let tilde = PathBuf::from("~");
+                match relative.as_os_str().len() {
+                    0 => tilde,
+                    _ => tilde.join(relative),
+                }
+            })
+        })
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 /// Applies a truncation strategy to a Path and returns a String
@@ -119,7 +126,16 @@ fn truncate_smart(path: &Path, tail_size: usize, dir_chars: usize) -> String {
         } else if comp.len() <= dir_chars {
             result.push(comp.to_string());
         } else {
-            result.push(comp.chars().take(dir_chars).collect());
+            let mut chars = comp.chars();
+            let mut prefix = String::new();
+
+            if let Some('.') = chars.clone().next() {
+                prefix.push('.');
+                chars.next();
+            }
+
+            let abbreviated: String = chars.take(dir_chars).collect();
+            result.push(format!("{prefix}{abbreviated}"));
         }
     }
 
@@ -212,13 +228,6 @@ mod tests {
     use flamingo_config::path::{PathConfig, Side, TruncateStrategy};
     use std::path::PathBuf;
 
-    fn create_test_config(truncate: TruncateStrategy, shorten_home: bool) -> PathConfig {
-        PathConfig {
-            truncate,
-            shorten_home,
-        }
-    }
-
     #[test]
     fn test_smart_truncation() {
         // Test long path gets truncated properly
@@ -284,21 +293,19 @@ mod tests {
 
     #[test]
     fn test_home_shortening() {
-        // This test assumes we can get the home directory
-        if let Some(home_dir) = dirs::home_dir() {
-            let home_subpath = home_dir.join("Documents").join("projects");
-            let result = substitute_home_dir(home_subpath);
-            assert_eq!(result, PathBuf::from("~/Documents/projects"));
+        let home_dir = PathBuf::from("/home/dir");
+        let home_subpath = home_dir.join("Documents").join("projects");
+        let result = substitute_home_dir(&home_subpath, Some(&home_dir));
+        assert_eq!(result, PathBuf::from("~/Documents/projects"));
 
-            // Test path not under home directory
-            let other_path = PathBuf::from("/usr/local/bin");
-            let result = substitute_home_dir(other_path.clone());
-            assert_eq!(result, other_path);
+        // Test path not under home directory
+        let some_path = PathBuf::from("/usr/local/bin");
+        let result = substitute_home_dir(&some_path, Some(&home_dir));
+        assert_eq!(result, some_path);
 
-            // Test exact home directory
-            let result = substitute_home_dir(home_dir);
-            assert_eq!(result, PathBuf::from("~"));
-        }
+        // Test exact home directory
+        let result = substitute_home_dir(&PathBuf::from("/home/dir"), Some(&home_dir));
+        assert_eq!(result, PathBuf::from("~"));
     }
 
     #[test]
@@ -306,14 +313,14 @@ mod tests {
         let short_strategy = TruncateStrategy::None;
         let long_strategy = TruncateStrategy::Tail { size: 2 };
 
-        let config = create_test_config(
-            TruncateStrategy::Adaptive {
+        let config = PathConfig {
+            truncate: TruncateStrategy::Adaptive {
                 threshold: 15,
                 short: Box::new(short_strategy),
                 long: Box::new(long_strategy),
             },
-            false,
-        );
+            shorten_home: false,
+        };
 
         // Test short path uses short strategy (None)
         let short_path = PathBuf::from("/short/path");
@@ -328,7 +335,10 @@ mod tests {
 
     #[test]
     fn test_no_truncation() {
-        let config = create_test_config(TruncateStrategy::None, false);
+        let config = PathConfig {
+            truncate: TruncateStrategy::None,
+            shorten_home: false,
+        };
         let path = PathBuf::from("/very/long/path/to/directory");
         let result = apply_truncation_strategy(&path, &config.truncate);
         assert_eq!(result, "/very/long/path/to/directory");
@@ -336,13 +346,13 @@ mod tests {
 
     #[test]
     fn test_edge_cases() {
-        let config = create_test_config(
-            TruncateStrategy::Smart {
+        let config = PathConfig {
+            truncate: TruncateStrategy::Smart {
                 tail_size: 1,
                 dir_chars: 1,
             },
-            false,
-        );
+            shorten_home: false,
+        };
 
         // Test root path
         let root_path = PathBuf::from("/");
