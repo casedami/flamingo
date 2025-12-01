@@ -192,6 +192,7 @@ dependencies = [
  "flamingo-config",
  "flamingo-context",
  "flamingo-err",
+ "flamingo-git",
  "flamingo-logger",
  "flamingo-path",
  "log",

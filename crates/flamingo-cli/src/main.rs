@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use flamingo_config::FlamingoConfig;
 use flamingo_context::{FlamingoContext, format};
 use flamingo_err::ConfigError;
+use flamingo_git::git;
 use flamingo_logger as logger;
 use flamingo_path::flamingo_path;
 use std::path::PathBuf;
@@ -25,7 +26,11 @@ enum Commands {
         format: Option<String>,
     },
     /// Show git information
-    Git,
+    Git {
+        /// Override the path to display (defaults to current directory)
+        #[arg(short, long)]
+        format: Option<String>,
+    },
 }
 
 fn main() {
@@ -59,7 +64,7 @@ fn main() {
 
     let context = match &args.command {
         Some(Commands::Path { .. }) => FlamingoContext::PATH,
-        Some(Commands::Git) => FlamingoContext::GIT,
+        Some(Commands::Git { .. }) => FlamingoContext::GIT,
         None => FlamingoContext::PATH | FlamingoContext::GIT, // default to both
     };
 
@@ -68,6 +73,13 @@ fn main() {
     }) = &args.command
     {
         let p = flamingo_path(&cfg.path, Some(PathBuf::from(user_path)));
+        print!("{p}");
+        return;
+    } else if let Some(Commands::Git {
+        format: Some(user_path),
+    }) = &args.command
+    {
+        let p = git(PathBuf::from(user_path), &cfg.git).unwrap_or(String::new());
         print!("{p}");
         return;
     }

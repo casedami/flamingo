@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 flamingo-config = { path = "../flamingo-config" }
+flamingo-git = { path = "../flamingo-git" }
 flamingo-path = { path = "../flamingo-path" }
 flamingo-context = { path = "../flamingo-context" }
 flamingo-logger = { path = "../flamingo-logger" }
